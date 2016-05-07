@@ -143,6 +143,8 @@ func (ssh_conf *MakeConfig) Run(command string) (outStr string, err error) {
 		case <-doneChan:
 			stillGoing = false
 		case line := <-outChan:
+			// TODO: make this some kind of config option
+			fmt.Println(line)
 			outStr += line + "\n"
 		}
 	}
