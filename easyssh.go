@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -111,23 +112,36 @@ func (ssh_conf *MakeConfig) Stream(command string) (output chan string, done cha
 		return output, done, err
 	}
 	// combine outputs, create a line-by-line scanner
-	outputReader := io.MultiReader(outReader, errReader)
+	outputReaderOut := io.Reader(outReader)
+	outputReaderErr := io.Reader(errReader)
 	err = session.Start(command)
-	scanner := bufio.NewScanner(outputReader)
+	scannerOut := bufio.NewScanner(outputReaderOut)
+	scannerErr := bufio.NewScanner(outputReaderErr)
 	// continuously send the command's output over the channel
 	outputChan := make(chan string)
 	done = make(chan bool)
-	go func(scanner *bufio.Scanner, out chan string, done chan bool) {
-		defer close(outputChan)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go send_output_to_chan(scannerOut, &outputChan, &wg)
+	go send_output_to_chan(scannerErr, &outputChan, &wg)
+	// once the streams are done cleanup
+	go func() {
+		wg.Wait()
 		defer close(done)
-		for scanner.Scan() {
-			outputChan <- scanner.Text()
-		}
-		// close all of our open resources
+		defer close(outputChan)
 		done <- true
 		session.Close()
-	}(scanner, outputChan, done)
+		return
+	}()
 	return outputChan, done, err
+}
+
+func send_output_to_chan(scanner *bufio.Scanner, out *chan string, wg *sync.WaitGroup) {
+	for scanner.Scan() {
+		*out <- scanner.Text()
+	}
+	wg.Done()
+	return
 }
 
 // Runs command on remote machine and returns its stdout as a string
